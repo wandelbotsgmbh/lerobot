@@ -16,8 +16,8 @@
 import logging
 
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.utils.experiment_logger import ExperimentLogger
-from lerobot.utils.wandb_utils import WandBLogger
 
 
 def create_experiment_loggers(cfg: TrainPipelineConfig) -> ExperimentLogger | None:
