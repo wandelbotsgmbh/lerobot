@@ -13,7 +13,10 @@
 # limitations under the License.
 
 
+import atexit
 import logging
+import signal
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +37,13 @@ class MLflowLogger(ExperimentLogger):
         self.job_name = cfg.job_name
         self.env_fps = cfg.env.fps if cfg.env else None
 
+        self._finished = False
+        self._exit_status = "FINISHED"
+
         mlflow.start_run()
+
+        # Register exit handlers to detect failures and cancellations
+        self._register_exit_handlers()
 
         # Log configuration
         mlflow.log_params(self._flatten_config(cfg.to_dict()))
@@ -59,6 +68,51 @@ class MLflowLogger(ExperimentLogger):
             experiment_id = run_info.info.experiment_id
             url = f"{tracking_uri}/#/experiments/{experiment_id}/runs/{run_id}"
             logging.info(f"Track this run --> {colored(url, 'yellow', attrs=['bold'])}")
+
+    def _register_exit_handlers(self) -> None:
+        """Register atexit, excepthook, and signal handlers to track process exit status."""
+        # Chain the original excepthook to detect unhandled exceptions
+        self._original_excepthook = sys.excepthook
+
+        def _excepthook(exc_type, exc_value, exc_tb):
+            self._exit_status = "FAILED"
+            self._original_excepthook(exc_type, exc_value, exc_tb)
+
+        sys.excepthook = _excepthook
+
+        # Handle SIGINT (Ctrl+C) and SIGTERM (kill) as cancellation
+        self._original_sigint = signal.getsignal(signal.SIGINT)
+        self._original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _signal_handler(signum, frame):
+            self._exit_status = "KILLED"
+            # Restore and re-raise the original handler so the process still terminates
+            sig = signal.SIGINT if signum == signal.SIGINT else signal.SIGTERM
+            original = self._original_sigint if signum == signal.SIGINT else self._original_sigterm
+            signal.signal(sig, original)
+            if callable(original) and original not in (signal.SIG_DFL, signal.SIG_IGN):
+                original(signum, frame)
+            elif original == signal.SIG_DFL:
+                # Re-raise so default behaviour (e.g. KeyboardInterrupt) still occurs
+                signal.signal(sig, signal.SIG_DFL)
+                signal.raise_signal(signum)
+
+        signal.signal(signal.SIGINT, _signal_handler)
+        signal.signal(signal.SIGTERM, _signal_handler)
+
+        # atexit runs last – end the MLflow run with the determined status if not already finished
+        atexit.register(self._atexit_handler)
+
+    def _atexit_handler(self) -> None:
+        """End the MLflow run with the correct status on process exit."""
+        if self._finished:
+            return
+        try:
+            status = self._exit_status
+            mlflow.end_run(status=status)
+            logging.info(f"MLflow run ended via atexit handler with status: {status}")
+        except Exception as e:
+            logging.warning(f"Failed to end MLflow run in atexit handler: {e}")
 
     def _flatten_config(self, config_dict: dict[str, Any], prefix: str = "") -> dict[str, Any]:
         """Flatten nested configuration dictionary for MLflow params."""
@@ -144,8 +198,11 @@ class MLflowLogger(ExperimentLogger):
             logging.warning(f"Failed to log video to MLflow: {e}")
 
     def finish(self) -> None:
-        """End the MLflow run."""
+        """End the MLflow run with FINISHED status."""
+        if self._finished:
+            return
+        self._finished = True
         try:
-            mlflow.end_run()
+            mlflow.end_run(status="FINISHED")
         except Exception as e:
             logging.warning(f"Failed to end MLflow run: {e}")
