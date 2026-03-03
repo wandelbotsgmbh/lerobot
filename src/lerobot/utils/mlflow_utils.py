@@ -69,50 +69,61 @@ class MLflowLogger(ExperimentLogger):
             url = f"{tracking_uri}/#/experiments/{experiment_id}/runs/{run_id}"
             logging.info(f"Track this run --> {colored(url, 'yellow', attrs=['bold'])}")
 
+    def _end_run(self, status: str) -> None:
+        """End the MLflow run exactly once with the given status."""
+        if self._finished:
+            return
+        self._finished = True
+        try:
+            mlflow.end_run(status=status)
+            logging.info(f"MLflow run ended with status: {status}")
+        except Exception as e:
+            logging.warning(f"Failed to end MLflow run: {e}")
+
     def _register_exit_handlers(self) -> None:
-        """Register atexit, excepthook, and signal handlers to track process exit status."""
-        # Chain the original excepthook to detect unhandled exceptions
-        self._original_excepthook = sys.excepthook
+        """Register handlers to end the MLflow run with the correct status on exit.
+
+        Only observes the exit reason and ensures mlflow.end_run() is called once.
+        Does not interfere with normal error propagation or signal handling.
+        """
+        # --- Detect unhandled exceptions (sets status; does NOT call end_run) ---
+        original_excepthook = sys.excepthook
 
         def _excepthook(exc_type, exc_value, exc_tb):
             self._exit_status = "FAILED"
-            self._original_excepthook(exc_type, exc_value, exc_tb)
+            original_excepthook(exc_type, exc_value, exc_tb)
 
         sys.excepthook = _excepthook
 
-        # Handle SIGINT (Ctrl+C) and SIGTERM (kill) as cancellation
-        self._original_sigint = signal.getsignal(signal.SIGINT)
-        self._original_sigterm = signal.getsignal(signal.SIGTERM)
+        # --- Detect non-zero sys.exit() (SystemExit bypasses sys.excepthook) ---
+        builtin_exit = sys.exit
+
+        def _exit_wrapper(code=0):
+            if code not in (None, 0):
+                self._exit_status = "FAILED"
+            builtin_exit(code)
+
+        sys.exit = _exit_wrapper
+
+        # --- SIGTERM / SIGINT: end run immediately, then re-raise ---
+        original_sigint = signal.getsignal(signal.SIGINT)
+        original_sigterm = signal.getsignal(signal.SIGTERM)
 
         def _signal_handler(signum, frame):
-            self._exit_status = "KILLED"
-            # Restore and re-raise the original handler so the process still terminates
+            self._end_run("KILLED")
+            # Restore default handler and re-raise to ensure normal termination
             sig = signal.SIGINT if signum == signal.SIGINT else signal.SIGTERM
-            original = self._original_sigint if signum == signal.SIGINT else self._original_sigterm
-            signal.signal(sig, original)
+            original = original_sigint if signum == signal.SIGINT else original_sigterm
+            signal.signal(sig, signal.SIG_DFL)
             if callable(original) and original not in (signal.SIG_DFL, signal.SIG_IGN):
                 original(signum, frame)
-            elif original == signal.SIG_DFL:
-                # Re-raise so default behaviour (e.g. KeyboardInterrupt) still occurs
-                signal.signal(sig, signal.SIG_DFL)
-                signal.raise_signal(signum)
+            signal.raise_signal(signum)
 
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
 
-        # atexit runs last – end the MLflow run with the determined status if not already finished
-        atexit.register(self._atexit_handler)
-
-    def _atexit_handler(self) -> None:
-        """End the MLflow run with the correct status on process exit."""
-        if self._finished:
-            return
-        try:
-            status = self._exit_status
-            mlflow.end_run(status=status)
-            logging.info(f"MLflow run ended via atexit handler with status: {status}")
-        except Exception as e:
-            logging.warning(f"Failed to end MLflow run in atexit handler: {e}")
+        # --- atexit: fallback for normal exit and exception paths ---
+        atexit.register(lambda: self._end_run(self._exit_status))
 
     def _flatten_config(self, config_dict: dict[str, Any], prefix: str = "") -> dict[str, Any]:
         """Flatten nested configuration dictionary for MLflow params."""
@@ -199,10 +210,4 @@ class MLflowLogger(ExperimentLogger):
 
     def finish(self) -> None:
         """End the MLflow run with FINISHED status."""
-        if self._finished:
-            return
-        self._finished = True
-        try:
-            mlflow.end_run(status="FINISHED")
-        except Exception as e:
-            logging.warning(f"Failed to end MLflow run: {e}")
+        self._end_run("FINISHED")
