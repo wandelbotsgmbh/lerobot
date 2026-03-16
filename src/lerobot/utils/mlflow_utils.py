@@ -40,7 +40,10 @@ class MLflowLogger(ExperimentLogger):
         self._finished = False
         self._exit_status = "FINISHED"
 
-        mlflow.start_run()
+        if self.cfg.experiment_name:
+            mlflow.set_experiment(self.cfg.experiment_name)
+
+        mlflow.start_run(run_name=self.cfg.run_name)
 
         # Register exit handlers to detect failures and cancellations
         self._register_exit_handlers()

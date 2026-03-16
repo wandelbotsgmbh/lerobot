@@ -54,6 +54,10 @@ class MLflowConfig:
     """Configuration for MLflow experiment tracking."""
 
     enable: bool = False
+    # Name of the MLflow experiment (default: "Default")
+    experiment_name: str | None = None
+    # Name of the MLflow run (default: auto-generated)
+    run_name: str | None = None
     # Tags to apply to the run
     tags: dict[str, str] = field(default_factory=dict)
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
