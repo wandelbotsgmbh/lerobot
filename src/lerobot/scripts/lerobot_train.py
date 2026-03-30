@@ -533,8 +533,23 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("End of training")
 
-        if cfg.policy.push_to_hub:
-            unwrapped_policy = accelerator.unwrap_model(policy)
+        unwrapped_policy = accelerator.unwrap_model(policy)
+
+        # Upload final model to MLflow if enabled
+        if cfg.mlflow.enable and cfg.mlflow.push_to_mlflow:
+            if experiment_logger:
+                logging.info("Uploading final model to MLflow...")
+                experiment_logger.log_final_model(
+                    policy=unwrapped_policy,
+                    cfg=cfg,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                )
+            else:
+                logging.warning("MLflow push_to_mlflow is enabled but no experiment logger is available.")
+
+        # Upload to Hugging Face Hub if enabled (and not using MLflow for model upload)
+        elif cfg.policy.push_to_hub:
             if cfg.policy.use_peft:
                 unwrapped_policy.push_model_to_hub(cfg, peft_model=unwrapped_policy)
             else:

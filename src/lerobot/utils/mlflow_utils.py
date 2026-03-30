@@ -211,6 +211,67 @@ class MLflowLogger(ExperimentLogger):
         except Exception as e:
             logging.warning(f"Failed to log video to MLflow: {e}")
 
+    def log_final_model(
+        self,
+        policy,
+        cfg,
+        preprocessor=None,
+        postprocessor=None,
+    ) -> None:
+        """Log the final trained model to MLflow.
+
+        This uploads the model artifacts and optionally registers the model.
+        """
+        if self.cfg.disable_artifact:
+            logging.info("MLflow artifact logging is disabled, skipping final model upload.")
+            return
+
+        try:
+            from pathlib import Path
+            from tempfile import TemporaryDirectory
+
+            with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+                saved_path = Path(tmp) / "final_model"
+                saved_path.mkdir(parents=True, exist_ok=True)
+
+                # Save the policy model
+                policy.save_pretrained(saved_path)
+
+                # Save the training config
+                cfg.save_pretrained(saved_path)
+
+                # Save preprocessor if provided
+                if preprocessor is not None:
+                    preprocessor.save_pretrained(saved_path / "preprocessor")
+
+                # Save postprocessor if provided
+                if postprocessor is not None:
+                    postprocessor.save_pretrained(saved_path / "postprocessor")
+
+                # Generate and save model card
+                if hasattr(policy, "generate_model_card"):
+                    dataset_repo_id = cfg.dataset.repo_id if cfg.dataset else "unknown"
+                    model_type = cfg.policy.type if cfg.policy else "unknown"
+                    license_str = cfg.policy.license if cfg.policy else None
+                    tags = cfg.policy.tags if cfg.policy else None
+                    card = policy.generate_model_card(dataset_repo_id, model_type, license_str, tags)
+                    card.save(str(saved_path / "README.md"))
+
+                # Log all artifacts to MLflow
+                mlflow.log_artifacts(str(saved_path), artifact_path="final_model")
+
+                # Register the model if a model name is configured
+                if self.cfg.register_model_name:
+                    model_uri = f"runs:/{mlflow.active_run().info.run_id}/final_model"
+                    mlflow.register_model(model_uri, self.cfg.register_model_name)
+                    logging.info(f"Model registered to MLflow as '{self.cfg.register_model_name}'")
+
+                logging.info(f"Final model uploaded to MLflow run: {mlflow.active_run().info.run_id}")
+
+        except Exception as e:
+            logging.error(f"Failed to log final model to MLflow: {e}")
+            raise
+
     def finish(self) -> None:
         """End the MLflow run with FINISHED status."""
         self._end_run("FINISHED")

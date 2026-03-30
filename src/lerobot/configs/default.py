@@ -73,6 +73,11 @@ class MLflowConfig:
     tags: dict[str, str] = field(default_factory=dict)
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
     disable_artifact: bool = False
+    # Whether to upload the final model to MLflow instead of Hugging Face Hub
+    push_to_mlflow: bool = False
+    # Name to register the model under in MLflow Model Registry (optional)
+    # If not set, the model is logged as an artifact but not registered
+    register_model_name: str | None = None
 
 
 @dataclass

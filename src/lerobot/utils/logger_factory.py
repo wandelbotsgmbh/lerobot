@@ -74,6 +74,13 @@ class CompositeLogger(ExperimentLogger):
         for logger in self.loggers:
             logger.log_video(video_path, step, mode)
 
+    def log_final_model(self, policy, cfg, preprocessor=None, postprocessor=None):
+        for logger in self.loggers:
+            try:
+                logger.log_final_model(policy, cfg, preprocessor, postprocessor)
+            except Exception as e:
+                logging.warning(f"Failed to log final model with {type(logger).__name__}: {e}")
+
     def finish(self):
         for logger in self.loggers:
             try:

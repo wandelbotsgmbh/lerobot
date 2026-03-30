@@ -203,6 +203,20 @@ class WandBLogger(ExperimentLogger):
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
 
+    def log_final_model(
+        self,
+        policy,
+        cfg,
+        preprocessor=None,
+        postprocessor=None,
+    ) -> None:
+        """WandB doesn't support model registry upload in the same way as MLflow.
+        
+        Final model logging for WandB is handled via push_to_hub to HuggingFace.
+        This is a no-op for WandB.
+        """
+        logging.info("WandB does not support final model upload, skipping.")
+
     def finish(self) -> None:
         """Clean up and finish the wandb session."""
         if hasattr(self, "_wandb") and self._wandb is not None:

@@ -65,6 +65,27 @@ class ExperimentLogger(ABC):
         pass
 
     @abstractmethod
+    def log_final_model(
+        self,
+        policy,
+        cfg,
+        preprocessor=None,
+        postprocessor=None,
+    ) -> None:
+        """Log the final trained model.
+
+        This is called at the end of training to upload the final model to the
+        experiment tracking system (e.g., MLflow model registry).
+
+        Args:
+            policy: The trained policy model
+            cfg: Training pipeline configuration
+            preprocessor: Optional preprocessor to include with the model
+            postprocessor: Optional postprocessor to include with the model
+        """
+        pass
+
+    @abstractmethod
     def finish(self) -> None:
         """Clean up and finish the logging session."""
         pass
